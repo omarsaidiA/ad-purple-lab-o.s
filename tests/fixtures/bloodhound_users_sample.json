@@ -1,0 +1,51 @@
+{
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-1-1-1104",
+      "Properties": {
+        "name": "SVC_SQL@LAB.INTERNAL",
+        "enabled": true,
+        "hasspn": true,
+        "serviceprincipalnames": ["MSSQLSvc/srv01.lab.internal:1433"],
+        "dontreqpreauth": false,
+        "admincount": true,
+        "pwdneverexpires": true,
+        "pwdlastset": 1700000000
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-1-1-1105",
+      "Properties": {
+        "name": "CAROL@LAB.INTERNAL",
+        "enabled": true,
+        "hasspn": false,
+        "dontreqpreauth": true,
+        "admincount": false,
+        "pwdneverexpires": false,
+        "pwdlastset": 1780000000
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-1-1-502",
+      "Properties": {
+        "name": "KRBTGT@LAB.INTERNAL",
+        "enabled": false,
+        "hasspn": true,
+        "serviceprincipalnames": ["kadmin/changepw"],
+        "admincount": true,
+        "pwdlastset": 1600000000
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-1-1-1106",
+      "Properties": {
+        "name": "OLD_SVC@LAB.INTERNAL",
+        "enabled": false,
+        "hasspn": true,
+        "serviceprincipalnames": ["HTTP/old.lab.internal"],
+        "dontreqpreauth": true
+      }
+    }
+  ],
+  "meta": { "type": "users", "count": 4, "version": 6 }
+}

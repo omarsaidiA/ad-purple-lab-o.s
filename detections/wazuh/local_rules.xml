@@ -1,0 +1,216 @@
+<!--
+  Wazuh local rules for the AD purple-team lab (lab.internal).
+
+  Install: /var/ossec/etc/rules/local_rules.xml on the manager, then
+  `wazuh-analysisd -t` and restart wazuh-manager (see detections/README.md).
+
+  Conventions:
+  - IDs 1001xx, one block of ten per scenario (101 = scenario 1, 110 = scenario 2...).
+  - Field names are the ones Wazuh writes to alerts.json (camelCase, lower-case
+    first letter). Check them against a real alert from the lab before trusting a rule.
+  - Each rule is validated in the lab: true positive, false positives, after hardening.
+    Results are recorded in the matching docs/0N-*.md write-up.
+-->
+
+<group name="ad_lab,">
+
+  <!-- ================================================================== -->
+  <!-- Scenario 1: AD discovery                                           -->
+  <!-- ================================================================== -->
+
+  <!-- Honeytoken: any read of the decoy account svc_legacy. It is used by no
+       application, so a bulk collector (SharpHound, ldapsearch dump) is the
+       only expected reader. Needs the SACL from detections/README.md, section 2.
+       TODO: replace the GUID with (Get-ADUser svc_legacy).ObjectGUID. -->
+  <rule id="100101" level="12">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4662$</field>
+    <field name="win.eventdata.objectName" type="pcre2">(?i)00000000-0000-0000-0000-000000000000</field>
+    <description>AD lab: decoy account svc_legacy read by $(win.eventdata.subjectUserName) (possible AD collection)</description>
+    <mitre>
+      <id>T1087.002</id>
+    </mitre>
+    <group>ad_discovery,honeytoken,</group>
+  </rule>
+
+  <!-- Lookup of local groups and their members (SAMR) by a user account.
+       Collectors do this against every workstation; admin tools do it too. -->
+  <rule id="100102" level="3">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4798$|^4799$</field>
+    <field name="win.eventdata.subjectUserName" type="pcre2" negate="yes">\$$</field>
+    <description>AD lab: local group / account enumeration by $(win.eventdata.subjectUserName)</description>
+    <group>ad_discovery,</group>
+  </rule>
+
+  <!-- Bulk version of 100102. The threshold is set from the false positives
+       measured in the lab. -->
+  <rule id="100103" level="8" frequency="20" timeframe="120">
+    <if_matched_sid>100102</if_matched_sid>
+    <same_field>win.eventdata.subjectUserName</same_field>
+    <description>AD lab: many local group / account enumerations by $(win.eventdata.subjectUserName)</description>
+    <mitre>
+      <id>T1069.001</id>
+    </mitre>
+    <group>ad_discovery,</group>
+  </rule>
+
+  <!-- ================================================================== -->
+  <!-- Scenario 2: Kerberoasting                                          -->
+  <!-- ================================================================== -->
+
+  <!-- Service ticket encrypted with RC4 (0x17) or RC4-EXP (0x18) for a user
+       account: machine accounts end with $ and krbtgt is not a service. -->
+  <rule id="100110" level="8">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4769$</field>
+    <field name="win.eventdata.ticketEncryptionType" type="pcre2">(?i)^0x1[78]$</field>
+    <field name="win.eventdata.serviceName" type="pcre2" negate="yes">(?i)(\$$|^krbtgt$)</field>
+    <description>AD lab: RC4 service ticket for $(win.eventdata.serviceName) requested from $(win.eventdata.ipAddress)</description>
+    <mitre>
+      <id>T1558.003</id>
+    </mitre>
+    <group>kerberoasting,</group>
+  </rule>
+
+  <!-- Several RC4 tickets from the same address in one minute. -->
+  <rule id="100111" level="12" frequency="3" timeframe="60">
+    <if_matched_sid>100110</if_matched_sid>
+    <same_field>win.eventdata.ipAddress</same_field>
+    <description>AD lab: burst of RC4 service tickets from $(win.eventdata.ipAddress) (possible Kerberoasting)</description>
+    <mitre>
+      <id>T1558.003</id>
+    </mitre>
+    <group>kerberoasting,</group>
+  </rule>
+
+  <!-- Decoy SPN: no client ever needs a ticket for svc_legacy. -->
+  <rule id="100112" level="12">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4769$</field>
+    <field name="win.eventdata.serviceName" type="pcre2">(?i)^svc_legacy$</field>
+    <description>AD lab: service ticket requested for decoy account svc_legacy from $(win.eventdata.ipAddress)</description>
+    <mitre>
+      <id>T1558.003</id>
+    </mitre>
+    <group>kerberoasting,honeytoken,</group>
+  </rule>
+
+  <!-- ================================================================== -->
+  <!-- Scenario 3: lateral movement                                       -->
+  <!-- ================================================================== -->
+
+  <!-- PsExec-style execution. A service binary dropped in the root of
+       %SystemRoot% is already caught by the stock Wazuh rule 92650 (level 12);
+       this rule adds binaries started from a temp folder.
+       Wazuh doubles the backslashes of Windows event fields, hence "\\+". -->
+  <rule id="100130" level="10">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^7045$</field>
+    <field name="win.eventdata.imagePath" type="pcre2">(?i)\\+(windows\\+)?(temp|tmp)\\+[^\\]+\.(exe|bat|cmd|ps1)</field>
+    <description>AD lab: suspicious service $(win.eventdata.serviceName) installed: $(win.eventdata.imagePath)</description>
+    <mitre>
+      <id>T1569.002</id>
+      <id>T1021.002</id>
+    </mitre>
+    <group>lateral_movement,</group>
+  </rule>
+
+  <!-- WMIExec-style execution: shell started by the WMI provider host with its
+       output redirected to a file on ADMIN$ ("__<epoch>"). Child of the stock
+       rule 92069 (Sysmon 1, parent WmiPrvSE.exe, level 0), which matches first. -->
+  <rule id="100131" level="12">
+    <if_sid>92069</if_sid>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)\\+127\.0\.0\.1\\+admin\$\\+__\d</field>
+    <description>AD lab: remote command through WMI on $(win.system.computer) (wmiexec pattern)</description>
+    <mitre>
+      <id>T1047</id>
+    </mitre>
+    <group>lateral_movement,</group>
+  </rule>
+
+  <!-- Network logon over NTLM with a user (not machine) account. Normal domain
+       admin work uses Kerberos, so this is the base for the fan-out rule. -->
+  <rule id="100132" level="3">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4624$</field>
+    <field name="win.eventdata.logonType">^3$</field>
+    <field name="win.eventdata.authenticationPackageName" type="pcre2">(?i)^ntlm$</field>
+    <field name="win.eventdata.targetUserName" type="pcre2" negate="yes">(\$$|^ANONYMOUS LOGON$)</field>
+    <description>AD lab: NTLM network logon of $(win.eventdata.targetUserName) from $(win.eventdata.ipAddress)</description>
+    <group>lateral_movement,</group>
+  </rule>
+
+  <!-- Same account, NTLM, several logons in two minutes: pass-the-hash spray
+       with a shared local administrator password. -->
+  <rule id="100133" level="10" frequency="3" timeframe="120">
+    <if_matched_sid>100132</if_matched_sid>
+    <same_field>win.eventdata.targetUserName</same_field>
+    <description>AD lab: $(win.eventdata.targetUserName) logs on over NTLM to several hosts (possible pass-the-hash)</description>
+    <mitre>
+      <id>T1550.002</id>
+    </mitre>
+    <group>lateral_movement,</group>
+  </rule>
+
+  <!-- ================================================================== -->
+  <!-- Scenario 4: AD CS ESC1                                             -->
+  <!-- ================================================================== -->
+
+  <!-- Certificate request received / issued with a subject alternative name
+       supplied by the requester. Low level: some templates use it legitimately. -->
+  <rule id="100140" level="6">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4886$|^4887$</field>
+    <!-- "attributes" holds one attribute per line; Wazuh turns the line breaks
+         into a literal "\n", so the SAN line starts after "\n" or at the start. -->
+    <field name="win.eventdata.attributes" type="pcre2">(?i)(^|\\n|\s)san:\S*?upn=</field>
+    <description>AD lab: certificate request with a requester-supplied SAN by $(win.eventdata.requester)</description>
+    <mitre>
+      <id>T1649</id>
+    </mitre>
+    <group>adcs,</group>
+  </rule>
+
+  <!-- Issued certificate whose SAN names a privileged account. Wazuh cannot
+       compare two fields, so "SAN differs from requester" is checked by
+       scripts/ad_triage.py. TODO: keep the account list in sync with the lab. -->
+  <rule id="100141" level="13">
+    <if_sid>100140</if_sid>
+    <field name="win.system.eventID">^4887$</field>
+    <field name="win.eventdata.attributes" type="pcre2">(?i)upn=(administrator|adm_[a-z0-9]+)@</field>
+    <description>AD lab: certificate issued for a privileged account to $(win.eventdata.requester) (possible ESC1)</description>
+    <mitre>
+      <id>T1649</id>
+    </mitre>
+    <group>adcs,</group>
+  </rule>
+
+  <!-- ================================================================== -->
+  <!-- Scenario 5: DCSync                                                 -->
+  <!-- ================================================================== -->
+
+  <!-- Replication extended rights checked on the domain object. Domain
+       controllers do this all the time with their machine account. Needs the
+       domain root SACL from detections/README.md, section 2. -->
+  <rule id="100150" level="3">
+    <if_group>windows</if_group>
+    <field name="win.system.eventID">^4662$</field>
+    <field name="win.eventdata.properties" type="pcre2">(?i)(1131f6aa-9c07-11d1-f79f-00c04fc2dcd2|1131f6ad-9c07-11d1-f79f-00c04fc2dcd2|89e95b76-444d-4c62-991a-0facbeda640c)</field>
+    <description>AD lab: directory replication right used by $(win.eventdata.subjectUserName)</description>
+    <group>dcsync,</group>
+  </rule>
+
+  <!-- Same event from an account that is not a domain controller.
+       TODO: named exceptions only (e.g. an Entra Connect MSOL_ account), never a wildcard. -->
+  <rule id="100151" level="14">
+    <if_sid>100150</if_sid>
+    <field name="win.eventdata.subjectUserName" type="pcre2" negate="yes">\$$</field>
+    <description>AD lab: directory replication requested by non-DC account $(win.eventdata.subjectUserName) (possible DCSync)</description>
+    <mitre>
+      <id>T1003.006</id>
+    </mitre>
+    <group>dcsync,</group>
+  </rule>
+
+</group>

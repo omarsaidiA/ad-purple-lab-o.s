@@ -1,0 +1,24 @@
+<!--
+  Extra log sources for the Wazuh agent on DC01, SRV01 and CLIENT01.
+  Add these blocks inside <ossec_config> in
+  C:\Program Files (x86)\ossec-agent\ossec.conf, then restart WazuhSvc.
+  Application, Security and System are already collected by default.
+-->
+
+<!-- Sysmon: process creation (1), network connections (3), file creation (11)... -->
+<localfile>
+  <location>Microsoft-Windows-Sysmon/Operational</location>
+  <log_format>eventchannel</log_format>
+</localfile>
+
+<!--
+  DC01 only, scenario 1: event 1644 (expensive / inefficient LDAP queries).
+  Needs the "15 Field Engineering" diagnostics value set to 5 under
+  HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics. Very verbose:
+  enable it for a test session, then set it back to 0.
+-->
+<localfile>
+  <location>Directory Service</location>
+  <log_format>eventchannel</log_format>
+  <query>Event/System[EventID=1644]</query>
+</localfile>

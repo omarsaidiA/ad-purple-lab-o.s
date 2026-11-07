@@ -1,0 +1,50 @@
+# Exports from the lab: they can contain hashes, tickets or keys.
+# Commit only redacted excerpts, under docs/captures/.
+exports/
+*.evtx
+*.kirbi
+*.ccache
+*.pfx
+*.pem
+*.key
+*_users.json
+*_computers.json
+*_groups.json
+*_domains.json
+*_gpos.json
+*_ous.json
+*_containers.json
+*_certtemplates.json
+*bloodhound*.zip
+alerts.json
+archives.json
+hashes*.txt
+*.ntds
+*.secrets
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VirtualBox
+*.vdi
+*.vbox
+*.vbox-prev
+*.ova
+*.iso

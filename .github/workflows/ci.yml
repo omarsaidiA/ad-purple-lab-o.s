@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Analysis script (lint, types, tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest ruff mypy
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: python -m pytest -v
+
+  wazuh-rules:
+    name: Wazuh rules against a real manager
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash detections/tests/run.sh
