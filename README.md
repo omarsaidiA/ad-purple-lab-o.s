@@ -1,6 +1,6 @@
 # ad-purple-lab : attaquer, détecter et durcir un Active Directory
 
-![CI](https://github.com/omarsaidiA/ad-purple-lab/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/omarsaidiA/ad-purple-lab-o.s/actions/workflows/ci.yml/badge.svg)
 
 Kit purple team pour un lab Active Directory **isolé** : cinq attaques
 classiques sur AD, avec pour chacune :
