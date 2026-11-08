@@ -58,7 +58,21 @@ docker exec "$CONTAINER" bash -c '
   sleep 5
   : > /var/ossec/logs/archives/archives.json
   /var/ossec/framework/python/bin/python3 /tmp/inject.py /tmp/events.jsonl
-  sleep 5
+  # Wait until every injected event is archived (slow CI runners need more
+  # than a fixed sleep).
+  expected=$(grep -c . /tmp/events.jsonl)
+  for _ in $(seq 60); do
+    got=$(grep -c "\"location\":\"EventChannel\"" /var/ossec/logs/archives/archives.json || true)
+    [ "$got" -ge "$expected" ] && break
+    sleep 2
+  done
+  # The last line can still be half-written: wait until the file stops growing.
+  size=-1
+  until [ "$size" = "$(stat -c %s /var/ossec/logs/archives/archives.json)" ]; do
+    size=$(stat -c %s /var/ossec/logs/archives/archives.json)
+    sleep 2
+  done
+  echo "archived $got/$expected events"
 '
 docker exec "$CONTAINER" cat /var/ossec/logs/archives/archives.json > "$OUT"
 python3 "$HERE/cases.py" check "$OUT"
