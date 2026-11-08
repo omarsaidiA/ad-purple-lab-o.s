@@ -28,4 +28,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: bash detections/tests/run.sh
+      - run: bash detections/tests/run.sh 2>&1 | tee rules.log
+      - name: Report failures as annotations
+        if: failure()
+        run: |
+          grep -E "FAIL|cases passed|ERROR|CRITICAL|rror:" rules.log | tail -n 10 \
+            | while IFS= read -r line; do echo "::error::$line"; done

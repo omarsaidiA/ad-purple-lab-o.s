@@ -22,7 +22,16 @@ fi
 RULES="$HERE/../wazuh/local_rules.xml"
 OUT="${1:-$WORK/archives.json}"
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+cleanup() {
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    # Keep the manager's own view of the failure before the container goes away.
+    docker exec "$CONTAINER" tail -n 40 /var/ossec/logs/ossec.log 2>/dev/null \
+      | sed 's/^/ossec.log: /' || true
+  fi
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
 trap cleanup EXIT
 
 python3 "$HERE/cases.py" build "$WORK"
