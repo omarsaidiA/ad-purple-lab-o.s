@@ -21,7 +21,7 @@
   <!-- Honeytoken: any read of the decoy account svc_legacy. It is used by no
        application, so a bulk collector (SharpHound, ldapsearch dump) is the
        only expected reader. Needs the SACL from detections/README.md, section 2.
-       TODO: replace the GUID with (Get-ADUser svc_legacy).ObjectGUID. -->
+       Deployment: replace the GUID with (Get-ADUser svc_legacy).ObjectGUID. -->
   <rule id="100101" level="12">
     <if_group>windows</if_group>
     <field name="win.system.eventID">^4662$</field>
@@ -174,7 +174,7 @@
 
   <!-- Issued certificate whose SAN names a privileged account. Wazuh cannot
        compare two fields, so "SAN differs from requester" is checked by
-       scripts/ad_triage.py. TODO: keep the account list in sync with the lab. -->
+       scripts/ad_triage.py. Keep the account list in sync with the privileged accounts. -->
   <rule id="100141" level="13">
     <if_sid>100140</if_sid>
     <field name="win.system.eventID">^4887$</field>
@@ -202,7 +202,7 @@
   </rule>
 
   <!-- Same event from an account that is not a domain controller.
-       TODO: named exceptions only (e.g. an Entra Connect MSOL_ account), never a wildcard. -->
+       Exceptions: named accounts only (e.g. an Entra Connect MSOL_ account), never a wildcard. -->
   <rule id="100151" level="14">
     <if_sid>100150</if_sid>
     <field name="win.eventdata.subjectUserName" type="pcre2" negate="yes">\$$</field>

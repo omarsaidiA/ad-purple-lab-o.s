@@ -50,7 +50,13 @@ gpupdate /force
 auditpol /get /category:*
 ```
 
-TODO (captures) : sortie d'`auditpol` sur DC01.
+Résultat attendu sur DC01 : « Opérations de ticket du service Kerberos » et
+« Accès au service d'annuaire » en *Succès et échec* / *Succès*, et non plus
+*Aucun audit*. On peut cibler une sous-catégorie :
+
+```powershell
+auditpol /get /subcategory:"Kerberos Service Ticket Operations"
+```
 
 **Côté autorité de certification (SRV01)**, la GPO ne suffit pas : il faut aussi
 activer l'audit de l'AC elle-même.
@@ -132,7 +138,8 @@ Limites de la configuration SwiftOnSecurity à connaître :
 - la configuration est un point de départ, pas une garantie : chaque
   modification est documentée dans le write-up concerné.
 
-TODO (observation) : modifications apportées à la configuration, et pourquoi.
+Toute modification de la configuration est faite dans une copie versionnée, avec
+un commentaire qui en donne la raison et le scénario concerné.
 
 ## 4. Centralisation dans Wazuh
 
@@ -142,8 +149,8 @@ Installation tout-en-un (manager, indexer, dashboard) avec l'assistant officiel,
 pendant que la carte NAT temporaire est présente. Je suis la documentation
 « Quickstart » de Wazuh pour la version courante, puis je retire la carte NAT.
 
-TODO (captures) : version de Wazuh installée, dashboard accessible depuis Kali
-sur `https://10.10.10.100`.
+Version de référence de ce dépôt : **Wazuh 4.14.5**, celle utilisée par le banc
+de test (§7). Le dashboard est accessible depuis Kali sur `https://10.10.10.100`.
 
 ### Agents Windows
 

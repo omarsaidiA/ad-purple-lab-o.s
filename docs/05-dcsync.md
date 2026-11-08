@@ -6,6 +6,7 @@
 | **Prérequis attaquant** | Un compte avec les droits de réplication sur le domaine (ici `LAB\svc_backup`) |
 | **Outils** | [Impacket](https://github.com/fortra/impacket) (`secretsdump.py`) |
 | **Faiblesse du lab** | `svc_backup` a reçu « Replicating Directory Changes » et « Replicating Directory Changes All » |
+| **Règles** | 100150, 100151 |
 | **Snapshot de départ** | `02-vulnerable` |
 
 ## 1. Principe
@@ -30,7 +31,9 @@ En entreprise, ces droits finissent souvent sur un compte de service par erreur 
 outil de synchronisation, de sauvegarde ou d'audit configuré « pour que ça
 marche ».
 
-## 2. Observation dans le lab
+## 2. Reproduction et résultat attendu
+
+**Procédure.**
 
 1. **Constat côté défense** : qui possède ces droits ? BloodHound (arête
    `DCSync`) ou PowerShell :
@@ -44,10 +47,15 @@ marche ».
 
 2. **Démonstration** : avec `svc_backup`, extraction du **seul compte `krbtgt`**
    avec `secretsdump.py` (option `-just-dc-user`, voir la documentation
-   d'Impacket). Je ne récupère pas toute la base : cela suffit à prouver le risque.
+   d'Impacket). Inutile de récupérer toute la base : cela suffit à prouver le
+   risque.
 
-TODO (captures) : sortie de la commande PowerShell (comptes autorisés), preuve de
-l'extraction avec l'**empreinte masquée**.
+**Résultat attendu :**
+
+- la commande PowerShell liste `LAB\svc_backup` à côté des groupes légitimes
+  (« Contrôleurs de domaine de l'entreprise », « Administrateurs ») ;
+- l'extraction renvoie les empreintes de `krbtgt`. Elles ne sont jamais publiées,
+  même tronquées.
 
 ## 3. Trace laissée dans les journaux
 
@@ -61,13 +69,25 @@ Signal clé : un 4662 avec un GUID de réplication dont le `SubjectUserName`
 compte utilisateur qui réplique est anormal.
 
 Prérequis : audit « Directory Service Access » en succès sur les DC **et** une
-entrée SACL d'audit sur la racine du domaine (Everyone ou Domain Users, droits
-étendus de réplication). Voir [detections/README.md](../detections/README.md).
+entrée SACL d'audit sur la racine du domaine (Everyone, droits étendus de
+réplication). Voir [detections/README.md](../detections/README.md).
 
 Côté réseau : un trafic DRSUAPI (RPC) vers un DC depuis une IP qui n'est pas un DC.
 C'est aussi détectable par un IDS, en dehors du périmètre de ce lab.
 
-TODO (captures) : 4662 brut de mon test (GUID visible).
+**Alerte produite par Wazuh 4.14** dans le banc de test :
+
+```json
+{
+  "rule": { "id": "100151", "level": 14,
+            "description": "AD lab: directory replication requested by non-DC account svc_backup (possible DCSync)" },
+  "data": { "win": {
+    "system": { "eventID": "4662", "channel": "Security", "computer": "DC01.lab.internal" },
+    "eventdata": { "subjectUserName": "svc_backup", "subjectDomainName": "LAB",
+                   "objectName": "%{11111111-2222-3333-4444-555555555555}",
+                   "properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2}" } } }
+}
+```
 
 ## 4. Règle de détection
 
@@ -75,13 +95,20 @@ TODO (captures) : 4662 brut de mon test (GUID visible).
 - `100151` : même événement avec un `subjectUserName` qui ne finit pas par `$`
   (niveau 14 : critique).
 - Analyse hors ligne : constat « DCSync » de
-  `python scripts/ad_triage.py logs exports/alerts.json`.
+  `python scripts/ad_triage.py logs exports/archives.json`.
 
 Fichier : [local_rules.xml](../detections/wazuh/local_rules.xml).
 
-TODO (test) : vrai positif sur l'attaque. Faux positifs possibles : Entra
-Connect (compte `MSOL_*`), à mettre en liste d'exceptions **nominative** si
-présent.
+**Validation** (banc de test, Wazuh 4.14.5) :
+
+| Cas | Attendu | Résultat |
+|---|---|---|
+| 4662, GUID `...-Get-Changes-All`, compte `svc_backup` | 100151 | ✅ |
+| 4662, même GUID, compte machine `DC02$` (réplication normale) | 100150 (niveau 3 seulement) | ✅ |
+
+**Faux positif connu :** Microsoft Entra Connect utilise un compte `MSOL_*` qui
+possède légitimement ces droits. S'il est présent, il est ajouté en exception
+**nominative** (jamais par motif générique).
 
 ## 5. Correction / durcissement
 
@@ -96,8 +123,9 @@ présent.
    `krbtgt` (en respectant le délai de réplication), pour invalider les tickets
    forgés.
 
-TODO (vérification) : après le retrait des droits, la même extraction échoue
-(`ERROR_DS_DRA_ACCESS_DENIED`). Capture de l'échec.
+**Contrôle après correction (résultat attendu).** `svc_backup` n'apparaît plus
+dans la sortie PowerShell du §2. La même extraction échoue avec une erreur
+d'accès refusé du DC (`ERROR_DS_DRA_ACCESS_DENIED`).
 
 ## Références
 

@@ -1,23 +1,28 @@
 # ad-purple-lab : attaquer, détecter et durcir un Active Directory
 
-Lab Active Directory monté chez moi, dans un réseau virtuel **isolé** dont je suis
-le seul propriétaire. Pour chaque technique d'attaque classique sur AD, je documente
-les étapes suivantes :
+![CI](https://github.com/omarsaidiA/ad-purple-lab/actions/workflows/ci.yml/badge.svg)
+
+Kit purple team pour un lab Active Directory **isolé** : cinq attaques
+classiques sur AD, avec pour chacune :
 
 1. ce que la technique exploite (principe) ;
-2. ce que j'ai observé en la rejouant dans le lab ;
+2. comment la reproduire dans le lab, et le résultat attendu ;
 3. **la trace qu'elle laisse dans les journaux** ;
-4. **la règle de détection** que j'ai écrite et testée dans Wazuh ;
-5. **le durcissement** qui la bloque, puis la vérification que l'attaque échoue.
+4. **la règle de détection Wazuh**, testée automatiquement dans un vrai manager ;
+5. **le durcissement** qui la bloque, et le contrôle qui le prouve.
 
 L'angle est **purple team**. La partie offensive s'appuie uniquement sur des outils
 publics et reconnus (voir [Outils offensifs utilisés](#outils-offensifs-utilisés)) ;
-ce dépôt ne contient aucun code d'attaque. Le code fourni sert à **analyser** des
-journaux et des exports.
+ce dépôt ne contient aucun code d'attaque. Le code fourni sert à **détecter** et
+à **analyser**.
 
-> **Statut :** lab en cours de construction. Les sections marquées
-> `TODO (captures)` seront complétées avec mes propres observations ; voir
-> [docs/roadmap.md](docs/roadmap.md).
+> **Ce qui est validé, ce qui ne l'est pas encore.** Les 15 règles Wazuh sont
+> validées dans un manager Wazuh 4.14.5 (41 événements de test, 41 résultats
+> conformes), et le script d'analyse est testé sur la sortie réelle de Wazuh.
+> Le tout tourne en intégration continue. Les événements de test sont
+> synthétiques : la prochaine étape est le déploiement dans le lab VirtualBox
+> décrit ici, pour mesurer les vrais volumes et les vrais faux positifs (voir
+> [docs/roadmap.md](docs/roadmap.md)).
 
 ---
 
@@ -53,13 +58,13 @@ Le montage pas à pas est dans [docs/00-lab-setup.md](docs/00-lab-setup.md).
 
 ## Scénarios
 
-| # | Scénario | Technique (MITRE ATT&CK) | Trace principale | Détection | Durcissement | Statut |
+| # | Scénario | Technique (MITRE ATT&CK) | Trace principale | Détection | Durcissement | Règles testées |
 |---|---|---|---|---|---|---|
-| 1 | [Cartographie de l'AD](docs/01-cartographie.md) | T1087.002, T1069.002 | Requêtes LDAP en masse, 4798/4799, compte leurre (4662) | Compte leurre + seuil d'énumération | Restreindre l'énumération SAMR, compte leurre | ☐ |
-| 2 | [Kerberoasting](docs/02-kerberoasting.md) | T1558.003 | 4769 avec chiffrement RC4 (0x17) | Rafale de 4769 RC4 depuis une même IP | gMSA, AES seul, mots de passe longs | ☐ |
-| 3 | [Mouvement latéral](docs/03-mouvement-lateral.md) | T1021.002, T1047, T1550.002 | 4624 type 3 NTLM, 7045, Sysmon 1 (WmiPrvSE) | Service suspect (règle native 92650 + locale), wmiexec, NTLM en éventail | Windows LAPS, pare-feu, tiering | ☐ |
-| 4 | [AD CS : ESC1](docs/04-adcs-esc1.md) | T1649 | 4886/4887 avec un SAN ≠ demandeur | Certificat émis pour un autre compte | Modèle corrigé, approbation, mappage fort | ☐ |
-| 5 | [DCSync](docs/05-dcsync.md) | T1003.006 | 4662 avec les GUID de réplication | Réplication par un compte non-DC | Revue des ACL du domaine, tiering | ☐ |
+| 1 | [Cartographie de l'AD](docs/01-cartographie.md) | T1087.002, T1069.002 | Requêtes LDAP en masse, 4798/4799, compte leurre (4662) | Compte leurre + seuil d'énumération | Restreindre l'énumération SAMR, compte leurre | ✅ |
+| 2 | [Kerberoasting](docs/02-kerberoasting.md) | T1558.003 | 4769 avec chiffrement RC4 (0x17) | Rafale de 4769 RC4 depuis une même IP | gMSA, AES seul, mots de passe longs | ✅ |
+| 3 | [Mouvement latéral](docs/03-mouvement-lateral.md) | T1021.002, T1047, T1550.002 | 4624 type 3 NTLM, 7045, Sysmon 1 (WmiPrvSE) | Service suspect (règle native 92650 + locale), wmiexec, NTLM en éventail | Windows LAPS, pare-feu, tiering | ✅ |
+| 4 | [AD CS : ESC1](docs/04-adcs-esc1.md) | T1649 | 4886/4887 avec un SAN ≠ demandeur | Certificat émis pour un autre compte | Modèle corrigé, approbation, mappage fort | ✅ |
+| 5 | [DCSync](docs/05-dcsync.md) | T1003.006 | 4662 avec les GUID de réplication | Réplication par un compte non-DC | Revue des ACL du domaine, tiering | ✅ |
 
 ## Le cœur du projet : la détection
 

@@ -65,8 +65,8 @@ Sur l'export Wazuh des tests (`tests/fixtures/wazuh_archives_sample.jsonl`) :
 ...
 ```
 
-TODO (captures) : sortie du script sur mon propre export du lab, après chaque
-scénario.
+Sur un export réel, la commande est la même : copier `archives.json` du manager
+(avec `logall_json` activé) puis lancer le script dessus.
 
 ## Tests
 

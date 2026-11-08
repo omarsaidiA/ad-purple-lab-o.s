@@ -6,6 +6,7 @@
 | **Prérequis attaquant** | L'empreinte NTLM ou le mot de passe du compte `localadmin` d'une machine |
 | **Outils** | [Impacket](https://github.com/fortra/impacket) (`psexec.py`, `wmiexec.py`), [NetExec](https://github.com/Pennyw0rth/NetExec) |
 | **Faiblesse du lab** | Même mot de passe administrateur local sur SRV01 et CLIENT01, pas de LAPS |
+| **Règles** | 92650 (native), 100130, 100131, 100132, 100133 |
 | **Snapshot de départ** | `02-vulnerable` |
 
 ## 1. Principe
@@ -26,18 +27,25 @@ Deux méthodes d'exécution différentes laissent des traces différentes :
 - **type WMIExec** : `Win32_Process.Create` via WMI ; le processus est lancé par
   `WmiPrvSE.exe`, et la sortie passe par un fichier sur `ADMIN$`.
 
-## 2. Observation dans le lab
+## 2. Reproduction et résultat attendu
 
-Depuis Kali, avec l'empreinte du compte `localadmin` (obtenue au cours du lab),
-je teste l'accès aux machines avec NetExec, puis j'exécute une commande anodine
-(`whoami`, `hostname`) avec chacune des deux méthodes. Pour la syntaxe, je suis la
-documentation d'Impacket et de NetExec.
+**Procédure.** Depuis Kali, avec l'empreinte du compte `localadmin`, tester
+l'accès aux machines avec NetExec, puis exécuter une commande anodine (`whoami`,
+`hostname`) avec chacune des deux méthodes, en suivant la documentation
+d'Impacket et de NetExec.
 
-TODO (captures) : machines sur lesquelles l'empreinte est acceptée (« Pwn3d! »
-dans NetExec), sortie des commandes anodines.
+**Résultat attendu :**
 
-TODO (observation) : ce que Microsoft Defender a bloqué ou signalé (si activé),
-et différence de bruit entre psexec et wmiexec.
+- NetExec indique un accès administrateur (`Pwn3d!`) sur SRV01 **et** CLIENT01
+  avec la même empreinte : c'est la conséquence directe de l'absence de LAPS ;
+- `psexec.py` crée un service au nom aléatoire dont le binaire est déposé à la
+  racine de `%SystemRoot%` ;
+- `wmiexec.py` ne crée pas de service : la commande est lancée par
+  `WmiPrvSE.exe`. Elle laisse donc moins de traces dans les journaux par défaut,
+  d'où l'intérêt de Sysmon ;
+- si Microsoft Defender est actif, le binaire de service de `psexec.py` est
+  souvent bloqué, alors que `wmiexec.py` passe plus facilement. C'est un point de
+  comparaison utile entre la prévention et la détection.
 
 ## 3. Trace laissée dans les journaux
 
@@ -54,7 +62,35 @@ Signal le plus robuste : **le même compte local s'authentifie en NTLM sur
 plusieurs machines en peu de temps, depuis la même source**. Un administrateur
 légitime utilise son compte de domaine en Kerberos, pas un compte local en NTLM.
 
-TODO (captures) : 7045 et Sysmon 1 correspondant à mes tests.
+**Alertes produites par Wazuh 4.14** dans le banc de test :
+
+```json
+{
+  "rule": { "id": "100131", "level": 12,
+            "description": "AD lab: remote command through WMI on CLIENT01.lab.internal (wmiexec pattern)" },
+  "data": { "win": {
+    "system": { "eventID": "1", "channel": "Microsoft-Windows-Sysmon/Operational" },
+    "eventdata": {
+      "parentImage": "C:\\\\Windows\\\\System32\\\\wbem\\\\WmiPrvSE.exe",
+      "image": "C:\\\\Windows\\\\System32\\\\cmd.exe",
+      "commandLine": "cmd.exe /Q /c whoami 1&gt; \\\\\\\\127.0.0.1\\\\ADMIN$\\\\__1762596060.12 2&gt;&amp;1" } } }
+}
+```
+
+```json
+{
+  "rule": { "id": "92650", "level": 12,
+            "description": "New Windows Service Created to start from windows root path. Suspicious event as the binary may have been dropped using Windows Admin Shares." },
+  "data": { "win": {
+    "system": { "eventID": "7045", "channel": "System", "computer": "SRV01.lab.internal" },
+    "eventdata": { "serviceName": "BTOBTO", "imagePath": "%systemroot%\\\\aBcDeFgH.exe",
+                   "accountName": "LocalSystem" } } }
+}
+```
+
+Dans ces extraits, les antislashs sont doublés : c'est ainsi que Wazuh stocke les
+champs Windows (voir [detections/README.md](../detections/README.md#4-centralisation-dans-wazuh)).
+Les règles et le script d'analyse en tiennent compte.
 
 ## 4. Règle de détection
 
@@ -69,10 +105,22 @@ TODO (captures) : 7045 et Sysmon 1 correspondant à mes tests.
   même compte sur 3 événements en 2 minutes (niveau 10).
 
 Fichier : [local_rules.xml](../detections/wazuh/local_rules.xml). Analyse hors
-ligne : `python scripts/ad_triage.py logs exports/alerts.json --lateral-threshold 3`.
+ligne : `python scripts/ad_triage.py logs exports/archives.json --lateral-threshold 3`.
 
-TODO (test) : vrai positif pour chaque méthode, faux positifs (déploiement
-logiciel, outils d'administration qui installent un service).
+**Validation** (banc de test, Wazuh 4.14.5) :
+
+| Cas | Attendu | Résultat |
+|---|---|---|
+| 7045, binaire `%systemroot%\aBcDeFgH.exe` | 92650 (native) | ✅ |
+| 7045, binaire `C:\Windows\Temp\updsvc.exe` | 100130 | ✅ |
+| 7045, installation légitime de `C:\Windows\Sysmon64.exe` | aucune règle du lab | ✅ |
+| Sysmon 1, `cmd.exe` lancé par `WmiPrvSE.exe` vers `ADMIN$\__` | 100131 | ✅ |
+| `localadmin` en NTLM sur DC01, SRV01, CLIENT01 | 100132, 100132, 100133 | ✅ |
+| Compte machine `CLIENT01$` en NTLM | aucune règle du lab | ✅ |
+
+**Faux positifs connus :** les outils de déploiement logiciel installent eux
+aussi des services. On les identifie au chemin du binaire et au compte source,
+puis on les ajoute en exception **nominative**.
 
 ## 5. Correction / durcissement
 
@@ -88,8 +136,10 @@ logiciel, outils d'administration qui installent un service).
    connectent jamais aux postes utilisateurs, et inversement.
 5. **Signature SMB obligatoire** : complète la protection contre le relais NTLM.
 
-TODO (vérification) : après LAPS et la GPO, la même empreinte est refusée sur
-les autres machines. Capture de l'échec et des 4625 correspondants.
+**Contrôle après correction (résultat attendu).** Avec LAPS, l'ancienne
+empreinte est refusée partout ; avec la GPO S-1-5-114, même le bon mot de passe
+local est refusé à distance. Les tentatives laissent des **4625** (échec
+d'ouverture de session) sur les cibles : un signal à surveiller à son tour.
 
 ## Références
 

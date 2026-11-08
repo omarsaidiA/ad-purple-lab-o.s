@@ -29,7 +29,12 @@ l'empreinte SHA-256 de chaque ISO avant de l'utiliser.
 > par défaut (RC4 désactivé ou restreint). Si un test donne un résultat différent
 > sur une version récente, c'est un constat intéressant à documenter.
 
-TODO (captures) : versions exactes des ISO et empreintes SHA-256 vérifiées.
+Vérification d'une image :
+
+```powershell
+Get-FileHash .\SERVER_EVAL_x64FRE_fr-fr.iso -Algorithm SHA256
+# comparer avec l'empreinte publiée sur la page de téléchargement
+```
 
 ## 2. Réseau isolé
 
@@ -53,7 +58,13 @@ ping -c 2 1.1.1.1        # doit échouer
 ping -c 2 10.10.10.10    # doit répondre
 ```
 
-TODO (captures) : paramètres réseau VirtualBox et sortie des commandes ci-dessus.
+Équivalent en ligne de commande, pour une VM éteinte :
+
+```powershell
+VBoxManage modifyvm "DC01" --nic1 intnet --intnet1 "intnet-ad" --nic2 none
+VBoxManage showvminfo "DC01" --machinereadable | Select-String "^nic"
+# attendu : nic1="intnet", nic2="none"
+```
 
 ## 3. Promotion du contrôleur de domaine (DC01)
 
@@ -81,7 +92,8 @@ Get-ADDomain | Select-Object DNSRoot, NetBIOSName, DomainMode
 dcdiag /q              # aucune erreur attendue
 ```
 
-TODO (captures) : sortie de `Get-ADDomain` et de `dcdiag`.
+Résultat attendu : `DNSRoot = lab.internal`, `NetBIOSName = LAB`, et `dcdiag /q`
+ne renvoie rien (le mode silencieux n'affiche que les erreurs).
 
 ## 4. Comptes et objets du lab
 
@@ -123,8 +135,20 @@ introduites volontairement**.
 | 4 AD CS ESC1 | Modèle de certificat `VulnUserTemplate` : le demandeur fournit le sujet, usage authentification client, inscription ouverte à « Utilisateurs du domaine » | Duplication du modèle « Utilisateur » dans `certtmpl.msc` |
 | 5 DCSync | `svc_backup` reçoit les droits « Replicating Directory Changes » et « Replicating Directory Changes All » sur le domaine | Délégation sur la racine du domaine (`dsa.msc`, onglet Sécurité) |
 
-TODO (captures) : une capture par faiblesse configurée (SPN, modèle de
-certificat, ACL du domaine).
+Contrôle des faiblesses configurées :
+
+```powershell
+setspn -L LAB\svc_sql                                    # le SPN MSSQLSvc apparaît
+Get-ADUser svc_sql -Properties MemberOf | Select-Object -ExpandProperty MemberOf
+(Get-Acl "AD:DC=lab,DC=internal").Access |
+    Where-Object IdentityReference -like "*svc_backup*"   # droits de réplication
+certutil -catemplates | Select-String VulnUserTemplate    # modèle publié sur l'AC
+```
+
+Le compte leurre `svc_legacy` (scénarios 1 et 2) est créé en même temps :
+description « ancien compte de sauvegarde », SPN factice
+(`setspn -S HTTP/legacy-backup.lab.internal LAB\svc_legacy`), mot de passe long
+et aléatoire, aucun usage réel.
 
 ## 6. Serveur membre et AD CS (SRV01)
 
@@ -176,4 +200,9 @@ Les snapshots des VM d'un même scénario sont pris quand elles sont **éteintes
 peut se désynchroniser après une restauration. Si cela arrive :
 `Test-ComputerSecureChannel -Repair`.
 
-TODO (captures) : arbre des snapshots dans VirtualBox.
+Prise d'un snapshot en ligne de commande (VM éteinte) :
+
+```powershell
+VBoxManage snapshot "DC01" take "02-vulnerable" --description "Faiblesses du §5 configurées"
+VBoxManage snapshot "DC01" restore "02-vulnerable"
+```

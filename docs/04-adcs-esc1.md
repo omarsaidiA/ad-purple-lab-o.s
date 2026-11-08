@@ -6,6 +6,7 @@
 | **Prérequis attaquant** | Un compte de domaine autorisé à s'inscrire au modèle vulnérable (ici `LAB\alice`) |
 | **Outils** | [Certipy](https://github.com/ly4k/Certipy) (`find` pour l'audit, `req` / `auth` pour la démonstration) |
 | **Faiblesse du lab** | Modèle `VulnUserTemplate` (voir [00-lab-setup.md](00-lab-setup.md#5-faiblesses-volontaires-une-par-scénario)) |
+| **Règles** | 100140, 100141 + contrôle « SAN ≠ demandeur » dans `ad_triage.py` |
 | **Snapshot de départ** | `02-vulnerable` |
 
 ## 1. Principe
@@ -27,21 +28,28 @@ désigne un modèle qui réunit **quatre conditions** :
 Résultat : `alice` obtient un certificat au nom de l'administrateur, puis un TGT
 de l'administrateur. C'est une élévation de privilèges directe jusqu'au domaine.
 
-## 2. Observation dans le lab
+## 2. Reproduction et résultat attendu
 
-1. **Audit** (usage défensif légitime) : `certipy find` liste les modèles et
-   signale ceux qui sont vulnérables. Je compare avec la configuration attendue.
+**Procédure.**
+
+1. **Audit** (usage défensif légitime) : `certipy find` liste les modèles de
+   l'AC et signale ceux qui sont vulnérables.
 2. **Démonstration** : demande d'un certificat sur `VulnUserTemplate` avec l'UPN
-   de l'administrateur en SAN, puis authentification avec ce certificat. Je suis
-   la documentation de Certipy.
+   de l'administrateur en SAN, puis authentification avec ce certificat, en
+   suivant la documentation de Certipy.
 
-TODO (captures) : sortie de `certipy find` sur le modèle (section
-« Vulnerabilities »), certificat obtenu (sujet et SAN visibles, **sans** la clé
-privée).
+**Résultat attendu :**
 
-TODO (observation) : comportement avec le mappage fort des certificats
-(KB5014754) en mode « Enforcement » : la demande aboutit-elle encore ?
-L'authentification réussit-elle ?
+- `certipy find` classe `VulnUserTemplate` en **ESC1** : « Enrollee Supplies
+  Subject » activé, « Client Authentication » présent, inscription ouverte à
+  « Utilisateurs du domaine », pas d'approbation ;
+- la demande aboutit : l'AC émet un certificat dont le SAN contient
+  `administrator@lab.internal`, alors que le demandeur est `alice` ;
+- l'authentification PKINIT avec ce certificat donne un TGT de l'administrateur ;
+- avec le **mappage fort des certificats** (KB5014754) en mode « Enforcement »,
+  le DC exige que le certificat contienne le SID du compte (extension SID).
+  Un certificat dont le SAN pointe vers l'administrateur mais qui porte le SID
+  d'`alice` (ou aucun SID) est alors refusé à l'authentification.
 
 ## 3. Trace laissée dans les journaux
 
@@ -58,23 +66,46 @@ Prérequis : audit « Certification Services » activé **et**
 `certutil -setreg CA\AuditFilter 127` sur l'AC. Sans le second, aucun 4886/4887
 n'est produit.
 
-TODO (captures) : 4887 correspondant à la demande, puis 4768 avec les champs de
-certificat renseignés.
+**Alerte produite par Wazuh 4.14** dans le banc de test :
+
+```json
+{
+  "rule": { "id": "100141", "level": 13,
+            "description": "AD lab: certificate issued for a privileged account to LAB\\\\alice (possible ESC1)" },
+  "data": { "win": {
+    "system": { "eventID": "4887", "channel": "Security", "computer": "SRV01.lab.internal" },
+    "eventdata": { "requestId": "12", "requester": "LAB\\\\alice",
+                   "attributes": "CertificateTemplate:VulnUserTemplate\\nSAN:upn=administrator@lab.internal" } } }
+}
+```
+
+Le champ `attributes` contient un attribut par ligne, mais Wazuh stocke le saut
+de ligne sous la forme d'un `\n` littéral. La première version de la règle
+(`(?im)^san:`) ne correspondait donc à rien : le banc de test l'a révélé.
 
 ## 4. Règle de détection
 
 - `100140` : un 4886 ou 4887 dont les attributs contiennent un SAN (niveau 6, à
   corréler).
-- `100141` : un 4887 sur un modèle qui autorise le sujet fourni, avec un SAN
-  pointant vers un compte privilégié (niveau 13).
+- `100141` : un 4887 dont le SAN pointe vers un compte privilégié
+  (`administrator`, `adm_*`) (niveau 13).
 - Contrôle exact (SAN ≠ demandeur) : Wazuh ne sait pas comparer deux champs dans
-  une règle, donc ce test est fait par
-  `python scripts/ad_triage.py logs exports/alerts.json` (constat « AD CS ESC1 »).
+  une règle. Ce test est fait par `python scripts/ad_triage.py logs ...`, qui
+  produit le constat :
+
+```text
+| critical | AD CS ESC1 | Certificat émis pour administrator@lab.internal à la demande de LAB\alice |
+```
 
 Fichier : [local_rules.xml](../detections/wazuh/local_rules.xml).
 
-TODO (test) : vrai positif sur ma demande, absence d'alerte pour une inscription
-normale au modèle « Utilisateur ».
+**Validation** (banc de test, Wazuh 4.14.5) :
+
+| Cas | Attendu | Résultat |
+|---|---|---|
+| 4887 : `alice` obtient un SAN `administrator@lab.internal` | 100141 | ✅ |
+| 4886 : `carol` demande un SAN à son propre nom | 100140 (niveau 6 seulement) | ✅ |
+| 4887 : `bob` sur le modèle « User », sans SAN | aucune règle du lab | ✅ |
 
 ## 5. Correction / durcissement
 
@@ -88,8 +119,10 @@ normale au modèle « Utilisateur ».
 5. **Audit régulier** des modèles avec `certipy find` ou `Locksmith`, et
    inventaire des modèles publiés inutilisés (à dépublier).
 
-TODO (vérification) : `certipy find` ne signale plus ESC1, la même demande est
-refusée ou mise en attente. Capture des deux.
+**Contrôle après correction (résultat attendu).** `certipy find` ne signale plus
+ESC1 sur le modèle. Une demande avec un SAN arbitraire produit un certificat au
+nom du demandeur (le SAN fourni est ignoré), ou reste en attente d'approbation
+(4889 : demande mise en attente).
 
 ## Références
 
